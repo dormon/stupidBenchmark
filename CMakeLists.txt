@@ -15,6 +15,7 @@ set(REVISION_VERSION 0)
 
 find_package(SDL2           2.0.9 CONFIG REQUIRED)
 find_package(OpenCL         QUIET)
+find_package(Vulkan         QUIET)
 
 include(CMakeUtils.cmake)
 
@@ -36,7 +37,8 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
   SDL2::SDL2main
   geGL::geGL
   ArgumentViewer::ArgumentViewer
-  OpenCL
+  OpenCL::OpenCL
+  Vulkan::Vulkan
   )
 
 

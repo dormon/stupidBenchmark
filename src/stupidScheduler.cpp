@@ -7,6 +7,7 @@
 #include <functional>
 #include <sstream>
 #include <CL/cl.hpp>
+#include <vulkan/vulkan.hpp>
 
 using namespace ge::gl;
 
@@ -21,7 +22,8 @@ class Arguments{
       platformId    = args->getu32("-p",0,"platform id");
       deviceId      = args->getu32("-d",0,"device id");
       oglVersion    = args->getu32("-v",430,"version of opengl context");
-      apiName       = args->gets  ("-a","opengl","selects api, could be: opengl/opencl");
+      apiName       = args->gets  ("-a","opengl","selects api, could be: opengl/opencl/vulkan");
+      queueFamily   = args->getu32("-q",0,"queue family for vulkan api");
       bool printHelp = args->isPresent("-h", "prints this help");
       if (printHelp || !args->validate()) {
         std::cout << "This benchmark was created by Tomáš Milet" << std::endl;
@@ -39,6 +41,7 @@ class Arguments{
     uint32_t deviceId     ;
     uint32_t oglVersion   ;
     std::string apiName   ;
+    uint32_t queueFamily  ;
   protected:
 
 };
@@ -123,8 +126,11 @@ class OpenGLContext: public API{
       buf = std::make_shared<ge::gl::Buffer>(args.nofWorkgroups*sizeof(uint32_t));
       buf->bindBase(GL_SHADER_STORAGE_BUFFER,0);
 
-      atomicCounter = std::make_shared<ge::gl::Buffer>(sizeof(uint32_t));
-      atomicCounter->bindBase(GL_SHADER_STORAGE_BUFFER,1);
+      launchedGroups = std::make_shared<ge::gl::Buffer>(sizeof(uint32_t));
+      launchedGroups->bindBase(GL_SHADER_STORAGE_BUFFER,1);
+
+      workingGroups = std::make_shared<ge::gl::Buffer>(sizeof(uint32_t));
+      workingGroups->bindBase(GL_SHADER_STORAGE_BUFFER,2);
     }
 
 
@@ -133,18 +139,22 @@ class OpenGLContext: public API{
       ss << "#version " << args.oglVersion << std::endl;
       ss << "layout(local_size_x="<<args.WGS<<")in;" << std::endl;
       ss << R".(
-      layout(binding=0)buffer Data{uint data[];};
-      layout(binding=1)buffer Counter{uint atomicCounter;};
+      layout(binding=0)buffer Data    {uint data[];};
+      layout(binding=1)buffer Launched{uint launched;};
+      layout(binding=2)buffer Working {uint working ;};
       void main(){
         uint wid = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
         uint N = data[wid];
         uint counter = 0;
         for(uint i=0;i<N&&i<10000;++i)
           counter += N*counter;
-        if(counter == 1337)
+        if(counter == 1332383317)
           data[wid] = 100;
-        if(gl_LocalInvocationID.x == 0)
-          atomicAdd(atomicCounter,1);
+        if(gl_LocalInvocationID.x == 0){
+          atomicAdd(launched,1);
+          if(N!=0)
+            atomicAdd(working,1);
+        }
       }
       ).";
       auto prg = std::make_shared<Program>(std::make_shared<Shader>(GL_COMPUTE_SHADER,ss.str()));
@@ -158,7 +168,8 @@ class OpenGLContext: public API{
       auto const name = createName(isActive);
 
       uint32_t aaa = 0;
-      atomicCounter->setData(&aaa,sizeof(aaa));
+      launchedGroups->setData(&aaa,sizeof(aaa));
+      workingGroups->setData(&aaa,sizeof(aaa));
       glFinish();
 
       auto timer = Timer<float>();
@@ -173,10 +184,15 @@ class OpenGLContext: public API{
 
       auto time = timer.elapsedFromStart()/args.tests;
 
-      std::vector<uint32_t>at(1);
-      atomicCounter->getData(at);
-      if(at.at(0) != args.nofWorkgroups*args.tests)
-        std::cout << "SOMETHING FISHY IS GOING ON! " << at.at(0) << " - " << args.nofWorkgroups*args.tests << std::endl;
+      uint32_t launched = 0;
+      launchedGroups->getData(&launched,sizeof(launched));
+      if(launched != args.nofWorkgroups*args.tests)
+        std::cout << "SOMETHING FISHY IS GOING ON! " << launched << " - " << args.nofWorkgroups*args.tests << std::endl;
+
+      uint32_t working = 0;
+      workingGroups->getData(&working,sizeof(working));
+
+      std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
 
       printMeasurement(time,full,active,name);
 
@@ -191,7 +207,8 @@ class OpenGLContext: public API{
     SDL_Window*window;
     SDL_GLContext context;
     std::shared_ptr<ge::gl::Buffer>buf;
-    std::shared_ptr<ge::gl::Buffer>atomicCounter;
+    std::shared_ptr<ge::gl::Buffer>launchedGroups;
+    std::shared_ptr<ge::gl::Buffer>workingGroups;
 };
 
 class OpenCLContext: public API{
@@ -245,16 +262,19 @@ class OpenCLContext: public API{
       // kernel calculates for each element C=A+B
       std::string kernel_code=
       R".(
-      void kernel compute(global uint* data,global uint* atomicCounter){
-        uint wid = get_global_id(1) * get_local_size(0) + get_global_id(0);
+      void kernel compute(global uint* data,global uint* launched,global uint* working){
+        uint wid = get_group_id(1) * get_num_groups(0) + get_group_id(0);
         uint N = data[wid];
         uint counter = 0;
         for(uint i=0;i<N&&i<10000;++i)
           counter += N*counter;
-        if(counter == 1337)
+        if(counter == 1332383317)
           data[wid] = 100;
-        if(get_local_id(0) == 0)
-          atomic_add(atomicCounter,1);
+        if(get_local_id(0) == 0){
+          atomic_add(launched,1);
+          if(N!=0)
+            atomic_add(working,1);
+        }
       }
       ).";
 
@@ -269,16 +289,18 @@ class OpenCLContext: public API{
 
 
       // create buffers on the device
-      buffer = cl::Buffer(context,CL_MEM_READ_WRITE,sizeof(uint32_t)*args.nofWorkgroups);
-      atomicCounter = cl::Buffer(context,CL_MEM_READ_WRITE,sizeof(uint32_t));
+      buffer         = cl::Buffer(context,CL_MEM_READ_WRITE,sizeof(uint32_t)*args.nofWorkgroups);
+      launchedGroups = cl::Buffer(context,CL_MEM_READ_WRITE,sizeof(uint32_t));
+      workingGroups  = cl::Buffer(context,CL_MEM_READ_WRITE,sizeof(uint32_t));
 
       //create queue to which we will push commands for the device.
       queue = cl::CommandQueue(context,device);
 
       //alternative way to run the kernel
       kernel=cl::Kernel(program,"compute");
-      kernel.setArg(0,buffer);
-      kernel.setArg(1,atomicCounter);
+      kernel.setArg(0,buffer        );
+      kernel.setArg(1,launchedGroups);
+      kernel.setArg(2,workingGroups );
     }
 
 
@@ -291,25 +313,45 @@ class OpenCLContext: public API{
       //write arrays A and B to the device
       queue.enqueueWriteBuffer(buffer,CL_TRUE,0,sizeof(decltype(data)::value_type)*data.size(),data.data());
 
+
       auto const name = createName(isActive);
 
       uint32_t aa=0;
-      queue.enqueueWriteBuffer(atomicCounter,CL_TRUE,0,sizeof(uint32_t),&aa);
+      queue.enqueueWriteBuffer(launchedGroups,CL_TRUE,0,sizeof(uint32_t),&aa);
+      queue.enqueueWriteBuffer(workingGroups ,CL_TRUE,0,sizeof(uint32_t),&aa);
 
       auto timer = Timer<float>();
       queue.finish();
       timer.reset();
-      auto globalSize = cl::NDRange(args.nofWorkgroups*args.WGS/1024,1024,1);
-      auto localSize = cl::NDRange(args.WGS,1,1);
+      auto globalSize = cl::NDRange(args.nofWorkgroups*args.WGS/1024,1024);
+      auto localSize = cl::NDRange(args.WGS,1);
       for(size_t i=0;i<args.tests;++i)
         queue.enqueueNDRangeKernel(kernel,cl::NullRange,globalSize,localSize);
       queue.finish();
       auto time = timer.elapsedFromStart()/args.tests;
 
-      uint32_t bb=0;
-      queue.enqueueReadBuffer(atomicCounter,CL_TRUE,0,sizeof(uint32_t),&bb);
-      if(bb != args.nofWorkgroups*args.tests)
-        std::cerr << "SOMETHING FISHY IS GOING ABOUT! " << bb << " - " << args.nofWorkgroups * args.tests << std::endl;
+      uint32_t launched=0;
+      queue.enqueueReadBuffer(launchedGroups,CL_TRUE,0,sizeof(uint32_t),&launched);
+      if(launched != args.nofWorkgroups*args.tests)
+        std::cerr << "SOMETHING FISHY IS GOING ON! " << launched << " - " << args.nofWorkgroups * args.tests << std::endl;
+
+      uint32_t working = 0;
+      queue.enqueueReadBuffer(workingGroups,CL_TRUE,0,sizeof(uint32_t),&working);
+
+      std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
+
+      std::vector<uint32_t> test(args.nofWorkgroups);
+      queue.enqueueReadBuffer(buffer,CL_TRUE,0,sizeof(uint32_t)*args.nofWorkgroups,test.data());
+
+      if(test != data){
+        std::cerr << "WTF! NOT THE SAME" << std::endl;
+        for(size_t i=0;i<20;++i)
+          std::cerr << data[i] << " ";
+        std::cerr<< std::endl;
+        for(size_t i=0;i<20;++i)
+          std::cerr << test[i] << " ";
+        std::cerr<< std::endl;
+      }
 
       printMeasurement(time,full,active,name);
       return time;
@@ -318,14 +360,66 @@ class OpenCLContext: public API{
       std::cout << "CL_PLATFORM_NAME: "<<platform.getInfo<CL_PLATFORM_NAME>()<< std::endl;
       std::cout << "CL_DEVICE_NAME  : "<<device  .getInfo<CL_DEVICE_NAME  >()<< std::endl;
     }
-    cl::Platform     platform     ;
-    cl::Device       device       ;
-    cl::Context      context      ;
-    cl::Buffer       buffer       ;
-    cl::Buffer       atomicCounter;
-    cl::Program      program      ;
-    cl::Kernel       kernel       ;
-    cl::CommandQueue queue        ;
+    cl::Platform     platform      ;
+    cl::Device       device        ;
+    cl::Context      context       ;
+    cl::Buffer       buffer        ;
+    cl::Buffer       launchedGroups;
+    cl::Buffer       workingGroups ;
+    cl::Program      program       ;
+    cl::Kernel       kernel        ;
+    cl::CommandQueue queue         ;
+};
+
+class VulkanContext: public API{
+  public:
+    VulkanContext(Arguments const&args):API(args){
+      auto decodeAPIVersion = [](uint32_t apiVersion){
+        return std::to_string(VK_VERSION_MAJOR(apiVersion)) + "." + std::to_string(VK_VERSION_MINOR(apiVersion)) + "." + std::to_string(VK_VERSION_PATCH(apiVersion));
+      };
+
+
+      auto instanceExtensionProperties = vk::enumerateInstanceExtensionProperties();
+      for(auto const&iep:instanceExtensionProperties){
+       std::cerr << iep.extensionName << std::endl;
+      }
+      auto instanceVersion = vk::enumerateInstanceVersion();
+      std::cerr << decodeAPIVersion(instanceVersion) << std::endl;
+      auto instanceLayerProperties = vk::enumerateInstanceLayerProperties();
+      for(auto const&ilp:instanceLayerProperties){
+        std::cerr << ilp.layerName << std::endl;
+        std::cerr << "  description : " << ilp.description << std::endl;
+        std::cerr << "  spec version: " << decodeAPIVersion(ilp.specVersion) << std::endl; 
+        std::cerr << "  impl version: " << decodeAPIVersion(ilp.implementationVersion) << std::endl; 
+      }
+
+      instance = vk::createInstance({});
+      auto const physicalDevices = instance.enumeratePhysicalDevices();
+      physicalDevice = physicalDevices.at(args.deviceId);
+      auto const fams = physicalDevice.getQueueFamilyProperties();
+      auto const fam = fams.at(args.queueFamily);
+      float queuePriority = 0.0f;
+      auto deviceQueueCreateInfo = vk::DeviceQueueCreateInfo(vk::DeviceQueueCreateFlags(), static_cast<uint32_t>(args.queueFamily), 1, &queuePriority);
+      device = physicalDevice.createDevice(vk::DeviceCreateInfo(vk::DeviceCreateFlags(), 1, &deviceQueueCreateInfo));
+      commandPool = device.createCommandPool(vk::CommandPoolCreateInfo(vk::CommandPoolCreateFlags(), args.queueFamily));
+      commandBuffer = std::move(device.allocateCommandBuffers(vk::CommandBufferAllocateInfo(commandPool, vk::CommandBufferLevel::ePrimary, 1)).front());
+      auto memoryAllocaInfo = vk::MemoryAllocateInfo((args.nofWorkgroups+1)*sizeof(uint32_t));
+      device.allocateMemory(memoryAllocaInfo);
+
+    }
+    float measure(std::function<bool(size_t)>const&isActive,float full=0.f) const override{
+      return 0.f;
+    }
+    void printInfo()const override{
+      auto const props = physicalDevice.getProperties();
+      std::cerr << "VK_DEVICE_NAME: " << props.deviceName << std::endl;
+    }
+  protected:
+    vk::Instance instance;
+    vk::PhysicalDevice physicalDevice;
+    vk::Device         device;
+    vk::CommandPool    commandPool;
+    vk::CommandBuffer  commandBuffer;
 };
 
 
@@ -338,6 +432,8 @@ int main(int argc,char*argv[]){
     api = std::make_shared<OpenGLContext>(args);
   if(args.apiName == "opencl")
     api = std::make_shared<OpenCLContext>(args);
+  if(args.apiName == "vulkan")
+    api = std::make_shared<VulkanContext>(args);
 
 
   api->printInfo();

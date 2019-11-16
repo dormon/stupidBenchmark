@@ -21,6 +21,7 @@ include(CMakeUtils.cmake)
 
 createTargetForBadLibrary(OpenCL "${OpenCL_LIBRARY}" "${OpenCL_INCLUDE_DIR}")
 
+add_subdirectory(TxtUtils)
 add_subdirectory(MealyMachine)
 add_subdirectory(geGL)
 add_subdirectory(ArgumentViewer)

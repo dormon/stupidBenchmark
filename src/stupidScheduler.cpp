@@ -192,7 +192,7 @@ class OpenGLContext: public API{
       uint32_t working = 0;
       workingGroups->getData(&working,sizeof(working));
 
-      std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
+      //std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
 
       printMeasurement(time,full,active,name);
 
@@ -338,7 +338,7 @@ class OpenCLContext: public API{
       uint32_t working = 0;
       queue.enqueueReadBuffer(workingGroups,CL_TRUE,0,sizeof(uint32_t),&working);
 
-      std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
+      //std::cerr << "working groups: " << (float) working / (float) launched * 100 << std::endl;;
 
       std::vector<uint32_t> test(args.nofWorkgroups);
       queue.enqueueReadBuffer(buffer,CL_TRUE,0,sizeof(uint32_t)*args.nofWorkgroups,test.data());

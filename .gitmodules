@@ -7,3 +7,6 @@
 [submodule "MealyMachine"]
 	path = MealyMachine
 	url = https://github.com/dormon/MealyMachine.git
+[submodule "TxtUtils"]
+	path = TxtUtils
+	url = https://github.com/dormon/TxtUtils.git

@@ -13,14 +13,16 @@ set(MAJOR_VERSION 1)
 set(MINOR_VERSION 0)
 set(REVISION_VERSION 0)
 
-find_package(ArgumentViewer 1.0   CONFIG REQUIRED)
 find_package(SDL2           2.0.9 CONFIG REQUIRED)
-find_package(geGL           1.0.0 CONFIG REQUIRED)
 find_package(OpenCL         QUIET)
 
 include(CMakeUtils.cmake)
 
 createTargetForBadLibrary(OpenCL "${OpenCL_LIBRARY}" "${OpenCL_INCLUDE_DIR}")
+
+add_subdirectory(MealyMachine)
+add_subdirectory(geGL)
+add_subdirectory(ArgumentViewer)
 
 add_executable(${PROJECT_NAME} 
   src/stupidScheduler.cpp

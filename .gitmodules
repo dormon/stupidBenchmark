@@ -1,0 +1,9 @@
+[submodule "geGL"]
+	path = geGL
+	url = https://github.com/dormon/geGL.git
+[submodule "ArgumentViewer"]
+	path = ArgumentViewer
+	url = https://github.com/dormon/ArgumentViewer.git
+[submodule "MealyMachine"]
+	path = MealyMachine
+	url = https://github.com/dormon/MealyMachine.git

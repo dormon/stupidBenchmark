@@ -145,7 +145,7 @@ class OpenGLContext: public API{
       void main(){
         uint wid = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
         uint N = data[wid];
-        uint counter = 0;
+        uint counter = 1;
         for(uint i=0;i<N&&i<10000;++i)
           counter += N*counter;
         if(counter == 1332383317)
@@ -265,7 +265,7 @@ class OpenCLContext: public API{
       void kernel compute(global uint* data,global uint* launched,global uint* working){
         uint wid = get_group_id(1) * get_num_groups(0) + get_group_id(0);
         uint N = data[wid];
-        uint counter = 0;
+        uint counter = 1;
         for(uint i=0;i<N&&i<10000;++i)
           counter += N*counter;
         if(counter == 1332383317)

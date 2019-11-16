@@ -443,8 +443,8 @@ int main(int argc,char*argv[]){
 
   auto measureWGS = [&](std::shared_ptr<API>const&api){
     auto full = api->measure([](size_t){return true;},0.f);
-    for(size_t i=1;i<=40;++i)
-      api->measure([&](size_t w){return((w/i)%2)==0;},full);
+    //for(size_t i=1;i<=40;++i)
+    //  api->measure([&](size_t w){return((w/i)%2)==0;},full);
     for(size_t i=1;i<=40;++i)
       api->measure([&](size_t w){return (w%i)   ==0;},full);
   };
